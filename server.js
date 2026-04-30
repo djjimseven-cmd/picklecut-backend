@@ -535,6 +535,13 @@ async function createAutocut(payload, onProgress) {
   const candidates = await detectServeCandidates(sourcePath, duration, jobDir, onProgress);
 
   onProgress?.(45, `Validating ${candidates.length} serve candidates.`);
+let state = {
+  scoreA: 0,
+  scoreB: 0,
+  servingTeam: payload.firstServingTeam || 'A',
+  serverNumber: 2,
+  serverPlayer: payload.firstServingTeam === 'B' ? 'B1' : 'A1',
+};
 
   const validatedServes = [];
 
