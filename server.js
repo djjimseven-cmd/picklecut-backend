@@ -206,7 +206,7 @@ async function callVisionJson({ prompt, frames, maxImages = 20 }) {
       type: 'image_url',
       image_url: {
         url: await imageToDataUrl(frame.filePath),
-        detail: 'low',
+        detail: 'high',
       },
     });
   }
