@@ -559,14 +559,6 @@ let state = {
 
   const points = [];
 
-  let state = {
-    scoreA: 0,
-    scoreB: 0,
-    servingTeam: payload.firstServingTeam || 'A',
-    serverNumber: 2,
-    serverPlayer: payload.firstServingTeam === 'B' ? 'B1' : 'A1',
-  };
-
   for (let i = 0; i < validatedServes.length; i++) {
     onProgress?.(68 + Math.round((i / Math.max(validatedServes.length, 1)) * 22), `Detecting rally end ${i + 1}/${validatedServes.length}.`);
 
