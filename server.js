@@ -19,7 +19,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 const autocutJobs = new Map();
-const JOB_TIMEOUT_MS = 8 * 60 * 1000;
+const JOB_TIMEOUT_MS = 20 * 60 * 1000;
 
 if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
   cloudinary.config({
@@ -298,7 +298,7 @@ async function detectServeCandidates(videoPath, duration, jobDir, onProgress) {
 
   // Scan dày hơn: mỗi 2 giây, tối đa 180 frame (~6 phút video).
   // Bản cũ mỗi 5 giây dễ bỏ lỡ cú giao thật và nhầm sang cú trả giao.
-  const timestamps = makeRange(0, duration, 3).slice(0, 90);
+  const timestamps = makeRange(0, duration, 4).slice(0, 60);
   const frames = await extractFrames(videoPath, timestamps, framesDir, 'coarse', 480);
 
   const candidates = [];
@@ -362,7 +362,7 @@ async function validateServe(videoPath, candidateTime, matchContext, scoreState,
   const end = candidateTime + 3;
 
   // Scan mịn hơn quanh candidate để phân biệt serve và return.
-  const timestamps = makeRange(start, end, 0.6);
+  const timestamps = makeRange(start, end, 0.8);
   const frames = await extractFrames(videoPath, timestamps, path.join(jobDir, `serve-${index}`), 'serve', 720);
 
   const servingScore = scoreState.servingTeam === 'A' ? scoreState.scoreA : scoreState.scoreB;
@@ -442,7 +442,7 @@ Important decision rule:
 async function detectRallyEnd(videoPath, serveTime, nextServeTime, duration, jobDir, index) {
   const searchEnd = Math.min(duration, nextServeTime ? nextServeTime - 0.5 : serveTime + 30);
   const start = serveTime + 1;
-  const timestamps = makeRange(start, searchEnd, 2).slice(0, 10);
+  const timestamps = makeRange(start, searchEnd, 2.5).slice(0, 8);
   const frames = await extractFrames(videoPath, timestamps, path.join(jobDir, `end-${index}`), 'end', 720);
 
   const result = await callVisionJson({
