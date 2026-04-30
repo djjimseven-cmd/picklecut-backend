@@ -557,7 +557,7 @@ let state = {
 
     const serve = await validateServe(sourcePath, candidates[i], matchContext, state, jobDir, i + 1).catch(() => null);
 
-    if (serve?.serve_found && Number(serve.serve_contact_seconds) > 0 && Number(serve.confidence || 0) >= 0.3) {
+    if (serve?.serve_found && Number(serve.serve_contact_seconds) > 0 && Number(serve.confidence || 0) >= 0.2) {
       validatedServes.push(serve);
     }
   }
