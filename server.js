@@ -295,21 +295,27 @@ async function detectServeCandidates(videoPath, duration, jobDir, onProgress) {
   onProgress?.(20, 'Extracting coarse frames.');
 
   const framesDir = path.join(jobDir, 'coarse');
-  const timestamps = makeRange(0, duration, 5).slice(0, 45);
+
+  // Scan dày hơn: mỗi 2 giây, tối đa 180 frame (~6 phút video).
+  // Bản cũ mỗi 5 giây dễ bỏ lỡ cú giao thật và nhầm sang cú trả giao.
+  const timestamps = makeRange(0, duration, 2).slice(0, 180);
   const frames = await extractFrames(videoPath, timestamps, framesDir, 'coarse', 480);
 
   const candidates = [];
 
-  for (let i = 0; i < frames.length; i += 15) {
-    onProgress?.(28 + Math.round((i / Math.max(frames.length, 1)) * 15), 'Detecting serve candidate windows.');
+  for (let i = 0; i < frames.length; i += 12) {
+    onProgress?.(
+      28 + Math.round((i / Math.max(frames.length, 1)) * 15),
+      'Detecting true serve candidate windows.'
+    );
 
-    const batch = frames.slice(i, i + 15);
+    const batch = frames.slice(i, i + 12);
 
     const result = await callVisionJson({
-      maxImages: 15,
+      maxImages: 12,
       frames: batch,
       prompt: `
-You are detecting candidate START moments for pickleball doubles points.
+You are detecting TRUE pickleball doubles SERVE moments from sampled video frames.
 
 Return JSON only:
 {
@@ -322,29 +328,24 @@ Return JSON only:
   ]
 }
 
-A candidate point start is ONLY a real serve sequence.
+A point starts ONLY at a legal serve contact, not at a return shot.
 
-Detect candidate serve moments when:
-- all 4 players are in pre-serve formation
-- the server is behind the baseline
-- the server's partner is near or behind the serving baseline, not at the kitchen
-- the receiver is behind the baseline in the diagonal opposite court
-- the receiver's partner is near the kitchen/NVZ line
-- the next action is a diagonal serve into the opposite service box
+A TRUE serve candidate must show this sequence:
+1. One player is behind the baseline and has/controls the ball before contact.
+2. That same player performs a serve motion.
+3. The ball leaves the server side after paddle contact.
+4. The ball travels diagonally toward the opposite service box.
+5. The receiver does NOT touch the ball until after the serve crosses the net.
 
-Do NOT mark these as serve candidates:
-- players walking into position
-- ball pickup
-- ball rolling or being passed by hand
-- practice swing
-- warmup hit
-- mid-rally hit
-- players standing casually between points
+Reject the timestamp if:
+- the ball is already flying from the opposite court toward the hitter before contact
+- the hitter is returning an incoming serve
+- the contact is a return, drive, volley, dink, reset, or any mid-rally shot
+- the player did not visibly possess/control the ball before contact
+- players are walking into position, picking up the ball, passing the ball, or warming up
 
-Be generous only when the frame sequence clearly looks like a real point is about to start.
-If the exact serve contact is between two sampled frames, estimate the timestamp.
-`
-,
+Be generous only for TRUE serve candidates. If uncertain whether the hitter possessed the ball before contact, use low confidence below 0.3.
+`,
     });
 
     for (const item of result.serve_candidates || []) {
@@ -356,44 +357,57 @@ If the exact serve contact is between two sampled frames, estimate the timestamp
 
   return dedupeTimes(candidates, 5);
 }
+async function validateServe(videoPath, candidateTime, matchContext, scoreState, jobDir, index) {
+  const start = Math.max(0, candidateTime - 3);
+  const end = candidateTime + 3;
 
-async function validateServe(videoPath, candidateTime, matchContext, jobDir, index) {
-  const start = Math.max(0, candidateTime - 2.5);
-  const end = candidateTime + 2.5;
-  const timestamps = makeRange(start, end, 0.75);
+  // Scan mịn hơn quanh candidate để phân biệt serve và return.
+  const timestamps = makeRange(start, end, 0.4);
   const frames = await extractFrames(videoPath, timestamps, path.join(jobDir, `serve-${index}`), 'serve', 720);
 
+  const servingScore = scoreState.servingTeam === 'A' ? scoreState.scoreA : scoreState.scoreB;
+  const scoreCall = scoreCallBeforeServe(scoreState);
+  const expectedSide = expectedSideForServingScore(servingScore);
+
   return callVisionJson({
-    maxImages: 10,
+    maxImages: 16,
     frames,
     prompt: `
-You are validating the exact START of a pickleball doubles point.
+You are validating the TRUE start of a pickleball doubles point.
 
 Match:
 Team A: ${matchContext.teamA.name}
 Team B: ${matchContext.teamB.name}
-First serving team: ${matchContext.firstServingTeam}
 
-Your task:
-Find the exact timestamp where the paddle contacts the ball on a legal serve.
+Expected score before this serve: ${scoreCall}
+Expected serving team: Team ${scoreState.servingTeam}
+Expected server number: ${scoreState.serverNumber}
+Expected server side: ${expectedSide}
 
-The clip must start at:
-serve_contact_seconds - 1.0 second
+Find the exact TRUE serve contact timestamp.
 
-A valid point start requires ALL of these:
+CRITICAL RULE:
+A legal serve contact is valid ONLY if the hitter possessed/controlled the ball immediately before contact.
+If the ball is already coming from the opposite side toward the hitter, this is a RETURN, not a serve. Return serve_found=false.
+
+A valid point-start serve must satisfy:
 1. server_behind_baseline = true
-   - server's feet are fully behind the baseline before contact
-2. serving_partner_near_baseline = true
-   - server's partner is near/behind the baseline, not at the kitchen
-3. receiver_behind_diagonal_baseline = true
-   - receiver is behind the baseline in the diagonal opposite court
-4. receiver_partner_near_kitchen = true
-   - receiver's partner is near the kitchen/NVZ line
-5. diagonal_serve_detected = true
-   - serve travels diagonally into the opposite service court
-6. server_on_correct_score_side = true if the score side is visually inferable
-   - even serving score = right/even court
-   - odd serving score = left/odd court
+2. server_possessed_ball_before_contact = true
+3. server performs a serve motion from their own side
+4. ball leaves the server side after contact
+5. ball travels diagonally to the opposite service box
+6. receiver is behind the diagonal opposite baseline
+7. receiver partner is near the kitchen/NVZ line
+8. serving partner is near or behind baseline, not at kitchen
+
+Reject and return serve_found=false if:
+- the contact is made by the receiving player after the ball crossed the net
+- the hitter is returning an incoming serve
+- the contact is any mid-rally shot
+- the player did not visibly have/control the ball before contact
+- the ball trajectory before contact comes from the opponent court
+- players are only walking, picking up, rolling, bouncing, or passing the ball
+- it is a practice swing or warm-up hit
 
 Return JSON only:
 {
@@ -404,6 +418,7 @@ Return JSON only:
   "player_positions": {
     "server_behind_baseline": boolean,
     "server_on_correct_score_side": boolean,
+    "server_possessed_ball_before_contact": boolean,
     "serving_partner_near_baseline": boolean,
     "receiver_behind_diagonal_baseline": boolean,
     "receiver_partner_near_kitchen": boolean,
@@ -412,19 +427,8 @@ Return JSON only:
   "notes": string
 }
 
-Do NOT return serve_found true for:
-- someone picking up the ball
-- someone tossing/passing the ball by hand
-- players walking into position
-- practice swing
-- warmup hit
-- non-diagonal serve
-- mid-rally shot
-
-If it is a likely real serve but the exact player identity is unclear, return server_player = "unknown".
-Do not reject only because server_on_correct_score_side cannot be confirmed from the frame.
-`
-,
+If you cannot confirm the hitter possessed the ball before contact, return serve_found=false.
+`,
   });
 }
 
@@ -537,7 +541,7 @@ async function createAutocut(payload, onProgress) {
   for (let i = 0; i < candidates.length; i++) {
     onProgress?.(45 + Math.round((i / Math.max(candidates.length, 1)) * 20), `Validating serve ${i + 1}/${candidates.length}.`);
 
-    const serve = await validateServe(sourcePath, candidates[i], matchContext, jobDir, i + 1).catch(() => null);
+    const serve = await validateServe(sourcePath, candidates[i], matchContext, state, jobDir, i + 1).catch(() => null);
 
     if (serve?.serve_found && Number(serve.serve_contact_seconds) > 0 && Number(serve.confidence || 0) >= 0.3) {
       validatedServes.push(serve);
@@ -571,12 +575,13 @@ async function createAutocut(payload, onProgress) {
     const endSeconds = Math.min(duration, Number(end.dead_ball_seconds) + 0.2);
     const confidence = Math.min(Number(serve.confidence || 0.5), Number(end.confidence || 0.4));
 
-    const setupValid =
-      pos.server_behind_baseline === true &&
-      pos.serving_partner_near_baseline === true &&
-      pos.receiver_behind_diagonal_baseline === true &&
-      pos.receiver_partner_near_kitchen === true &&
-      pos.diagonal_serve_detected === true;
+   const setupValid =
+  pos.server_behind_baseline === true &&
+  pos.server_possessed_ball_before_contact === true &&
+  pos.serving_partner_near_baseline === true &&
+  pos.receiver_behind_diagonal_baseline === true &&
+  pos.receiver_partner_near_kitchen === true &&
+  pos.diagonal_serve_detected === true;
 
     const servingScore = state.servingTeam === 'A' ? state.scoreA : state.scoreB;
     const scoreBefore = scoreCallBeforeServe(state);
