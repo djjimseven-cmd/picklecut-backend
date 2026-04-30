@@ -298,7 +298,7 @@ async function detectServeCandidates(videoPath, duration, jobDir, onProgress) {
 
   // Scan dày hơn: mỗi 2 giây, tối đa 180 frame (~6 phút video).
   // Bản cũ mỗi 5 giây dễ bỏ lỡ cú giao thật và nhầm sang cú trả giao.
-  const timestamps = makeRange(0, duration, 2).slice(0, 180);
+  const timestamps = makeRange(0, duration, 3).slice(0, 90);
   const frames = await extractFrames(videoPath, timestamps, framesDir, 'coarse', 480);
 
   const candidates = [];
@@ -362,7 +362,7 @@ async function validateServe(videoPath, candidateTime, matchContext, scoreState,
   const end = candidateTime + 3;
 
   // Scan mịn hơn quanh candidate để phân biệt serve và return.
-  const timestamps = makeRange(start, end, 0.4);
+  const timestamps = makeRange(start, end, 0.6);
   const frames = await extractFrames(videoPath, timestamps, path.join(jobDir, `serve-${index}`), 'serve', 720);
 
   const servingScore = scoreState.servingTeam === 'A' ? scoreState.scoreA : scoreState.scoreB;
@@ -370,7 +370,7 @@ async function validateServe(videoPath, candidateTime, matchContext, scoreState,
   const expectedSide = expectedSideForServingScore(servingScore);
 
   return callVisionJson({
-    maxImages: 16,
+    maxImages: 10,
     frames,
     prompt: `
 You are validating the TRUE start of a pickleball doubles point.
@@ -435,11 +435,11 @@ If you cannot confirm the hitter possessed the ball before contact, return serve
 async function detectRallyEnd(videoPath, serveTime, nextServeTime, duration, jobDir, index) {
   const searchEnd = Math.min(duration, nextServeTime ? nextServeTime - 0.5 : serveTime + 30);
   const start = serveTime + 1;
-  const timestamps = makeRange(start, searchEnd, 1.5).slice(0, 16);
+  const timestamps = makeRange(start, searchEnd, 2).slice(0, 10);
   const frames = await extractFrames(videoPath, timestamps, path.join(jobDir, `end-${index}`), 'end', 720);
 
   const result = await callVisionJson({
-    maxImages: 16,
+    maxImages: 10,
     frames,
     prompt: `
 You are detecting the exact END of a pickleball doubles point.
