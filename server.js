@@ -416,18 +416,25 @@ Return JSON only:
   "server_player": "A1" | "A2" | "B1" | "B2" | "unknown",
   "confidence": number,
   "player_positions": {
-    "server_behind_baseline": boolean,
-    "server_on_correct_score_side": boolean,
-    "server_possessed_ball_before_contact": boolean,
-    "serving_partner_near_baseline": boolean,
-    "receiver_behind_diagonal_baseline": boolean,
-    "receiver_partner_near_kitchen": boolean,
-    "diagonal_serve_detected": boolean
+  "server_behind_baseline": boolean,
+  "server_on_correct_score_side": boolean,
+  "server_possessed_ball_before_contact": boolean,
+  "incoming_ball_from_opponent_before_contact": boolean,
+  "serving_partner_near_baseline": boolean,
+  "receiver_behind_diagonal_baseline": boolean,
+  "receiver_partner_near_kitchen": boolean,
+  "diagonal_serve_detected": boolean
+}
   },
   "notes": string
 }
 
-If you cannot confirm the hitter possessed the ball before contact, return serve_found=false.
+Important decision rule:
+- Reject only if you can clearly see the ball came from the opponent court before this contact.
+- If the ball before contact is too small or unclear, do NOT reject only because possession is unclear.
+- If the player is behind baseline, in serve formation, and the ball travels diagonally after contact, return serve_found=true with lower confidence.
+- Use confidence 0.45–0.70 when serve is likely but ball possession before contact is not clearly visible.
+
 `,
   });
 }
@@ -574,13 +581,16 @@ let state = {
     const endSeconds = Math.min(duration, Number(end.dead_ball_seconds) + 0.2);
     const confidence = Math.min(Number(serve.confidence || 0.5), Number(end.confidence || 0.4));
 
-   const setupValid =
+  const isClearlyReturnShot = pos.incoming_ball_from_opponent_before_contact === true;
+
+const setupValid =
+  isClearlyReturnShot === false &&
   pos.server_behind_baseline === true &&
-  pos.server_possessed_ball_before_contact === true &&
   pos.serving_partner_near_baseline === true &&
   pos.receiver_behind_diagonal_baseline === true &&
   pos.receiver_partner_near_kitchen === true &&
   pos.diagonal_serve_detected === true;
+
 
     const servingScore = state.servingTeam === 'A' ? state.scoreA : state.scoreB;
     const scoreBefore = scoreCallBeforeServe(state);
