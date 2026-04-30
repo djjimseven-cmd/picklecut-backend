@@ -309,7 +309,7 @@ async function detectServeCandidates(videoPath, duration, jobDir, onProgress) {
       maxImages: 15,
       frames: batch,
       prompt: `
-You are detecting pickleball doubles serve moments from sampled video frames.
+You are detecting candidate START moments for pickleball doubles points.
 
 Return JSON only:
 {
@@ -322,15 +322,29 @@ Return JSON only:
   ]
 }
 
-Detect moments where a real point likely starts:
-- players are in serve/receive formation
-- server is near baseline
-- receiver is diagonally opposite
-- rally begins after serve
+A candidate point start is ONLY a real serve sequence.
 
-Be generous. If a serve is likely between two frames, estimate the timestamp.
-Do not include warmups, ball pickup, walking, or mid-rally hits.
-`,
+Detect candidate serve moments when:
+- all 4 players are in pre-serve formation
+- the server is behind the baseline
+- the server's partner is near or behind the serving baseline, not at the kitchen
+- the receiver is behind the baseline in the diagonal opposite court
+- the receiver's partner is near the kitchen/NVZ line
+- the next action is a diagonal serve into the opposite service box
+
+Do NOT mark these as serve candidates:
+- players walking into position
+- ball pickup
+- ball rolling or being passed by hand
+- practice swing
+- warmup hit
+- mid-rally hit
+- players standing casually between points
+
+Be generous only when the frame sequence clearly looks like a real point is about to start.
+If the exact serve contact is between two sampled frames, estimate the timestamp.
+`
+,
     });
 
     for (const item of result.serve_candidates || []) {
@@ -353,23 +367,33 @@ async function validateServe(videoPath, candidateTime, matchContext, jobDir, ind
     maxImages: 10,
     frames,
     prompt: `
-You are validating a pickleball doubles point start.
+You are validating the exact START of a pickleball doubles point.
 
 Match:
 Team A: ${matchContext.teamA.name}
 Team B: ${matchContext.teamB.name}
 First serving team: ${matchContext.firstServingTeam}
 
-Find the actual serve contact timestamp in these frames.
+Your task:
+Find the exact timestamp where the paddle contacts the ball on a legal serve.
 
-Point start rules:
-- clip starts 1.0 second before legal serve contact
-- server behind baseline
-- server on correct score side if score is known
-- serving partner near/behind baseline, not kitchen
-- receiver behind diagonal opposite baseline
-- receiver partner near kitchen/NVZ
-- serve travels diagonally
+The clip must start at:
+serve_contact_seconds - 1.0 second
+
+A valid point start requires ALL of these:
+1. server_behind_baseline = true
+   - server's feet are fully behind the baseline before contact
+2. serving_partner_near_baseline = true
+   - server's partner is near/behind the baseline, not at the kitchen
+3. receiver_behind_diagonal_baseline = true
+   - receiver is behind the baseline in the diagonal opposite court
+4. receiver_partner_near_kitchen = true
+   - receiver's partner is near the kitchen/NVZ line
+5. diagonal_serve_detected = true
+   - serve travels diagonally into the opposite service court
+6. server_on_correct_score_side = true if the score side is visually inferable
+   - even serving score = right/even court
+   - odd serving score = left/odd court
 
 Return JSON only:
 {
@@ -388,10 +412,19 @@ Return JSON only:
   "notes": string
 }
 
-Important:
-- If you see a likely real serve but cannot identify exact player, still return serve_found true and server_player unknown.
-- Do not reject only because score side cannot be confirmed.
-`,
+Do NOT return serve_found true for:
+- someone picking up the ball
+- someone tossing/passing the ball by hand
+- players walking into position
+- practice swing
+- warmup hit
+- non-diagonal serve
+- mid-rally shot
+
+If it is a likely real serve but the exact player identity is unclear, return server_player = "unknown".
+Do not reject only because server_on_correct_score_side cannot be confirmed from the frame.
+`
+,
   });
 }
 
@@ -405,9 +438,12 @@ async function detectRallyEnd(videoPath, serveTime, nextServeTime, duration, job
     maxImages: 16,
     frames,
     prompt: `
-You are detecting when a pickleball rally becomes dead.
+You are detecting the exact END of a pickleball doubles point.
 
 A serve happened at ${serveTime}s.
+
+The clip must end at:
+dead_ball_seconds + 0.2 second
 
 Return JSON only:
 {
@@ -419,16 +455,30 @@ Return JSON only:
   "notes": string
 }
 
-End point at the earliest clear dead-ball event:
-- ball lands out
-- ball hits net and does not cross
-- double bounce
-- clear fault
-- player picks up/touches dead ball by hand
+A point ends at the EARLIEST clear dead-ball moment:
+1. out_of_bounds
+   - ball lands clearly outside the court lines
+2. net_not_over
+   - ball hits the net and does not cross to the opposite side
+3. double_bounce
+   - ball bounces twice before being returned
+4. fault
+   - clear visible fault and rally stops
+5. hand_pickup
+   - a player touches or picks up the dead ball by hand after the rally is over
 
-If exact dead ball is unclear but players stop and someone picks up ball, use hand_pickup.
-If no clear end is visible, return dead_ball_found false.
-`,
+Use hand_pickup only if earlier dead-ball evidence is unclear.
+
+Do NOT end the clip only because:
+- players slow down
+- audio becomes quiet
+- players reposition while the ball may still be live
+- ball touches the net but crosses and rally continues
+- camera view is temporarily unclear
+
+If no clear dead-ball is visible, return dead_ball_found false.
+`
+,
   });
 
   if (result.dead_ball_found && Number.isFinite(Number(result.dead_ball_seconds))) {
