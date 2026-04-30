@@ -212,15 +212,15 @@ async function callVisionJson({ prompt, frames, maxImages = 20 }) {
   }
 
   const response = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    temperature: 0,
-    messages: [
-      {
-        role: 'user',
-        content,
-      },
-    ],
-  });
+  model: OPENAI_MODEL,
+  messages: [
+    {
+      role: 'user',
+      content,
+    },
+  ],
+});
+
 
   return parseJsonFromText(response.choices[0]?.message?.content || '{}');
 }
